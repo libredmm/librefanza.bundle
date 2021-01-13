@@ -1,4 +1,5 @@
 import urllib
+import base64
 from datetime import datetime
 from os import path
 
@@ -19,17 +20,27 @@ class Librefanza(Agent.Movies):
     
     def search(self, results, media, lang, manual):
         try:
-            filename = urllib.unquote(media.filename)
-            Log('File Name: {}'.format(filename))
-            normalized_id = path.basename(path.dirname(filename)).split(' ')[0]
-            url = self.librefanzaURL(normalized_id)
+            Log('Manual: {}'.format(manual))
+            if manual:
+                Log('Name: {}'.format(media.name))
+                if media.name.startswith('http'):
+                    url = media.name
+                    if not url.endswith('.json'):
+                        url += '.json'
+                else:
+                    url = self.librefanzaURL(media.name)
+            else:
+                filename = urllib.unquote(media.filename)
+                Log('File Name: {}'.format(filename))
+                normalized_id = path.basename(path.dirname(filename)).split(' ')[0]
+                url = self.librefanzaURL(normalized_id)
             result = JSON.ObjectFromURL(url)
             Log('Search Result: {}'.format(result))
 
             if 'err' not in result:
                 results.Append(
                     MetadataSearchResult(
-                        id="librefanza|{}".format(result['normalized_id']),
+                        id='librefanza|{}'.format(base64.b64encode(url)),
                         name=(result['normalized_id'] + ' ' + result['title']),
                         year=(result['date']),
                         score=100,
@@ -37,18 +48,22 @@ class Librefanza(Agent.Movies):
                     )
                 )
         except Exception as e:
-            Log(e)
+            Log.Exception('')
 
     def librefanzaURL(self, query):
+        query = query.split()[0]
         return 'http://www.libredmm.com/movies/{}.json'.format(urllib.quote(query))
 
     def update(self, metadata, media, lang): 
         try:
             if not metadata.id.startswith('librefanza|'):
                 return
-            normalized_id = metadata.id[11:]
-            Log.Info('Normalized ID: {}'.format(normalized_id))
-            url = self.librefanzaURL(normalized_id)
+            Log.Info('ID: {}'.format(metadata.id))
+            try:
+                url = base64.b64decode(metadata.id[11:])
+            except TypeError:
+                url = self.librefanzaURL(metadata.id[11:])
+            Log.Info('URL: {}'.format(url))
             result = JSON.ObjectFromURL(url)
             Log('Update Result: {}'.format(result))
 
@@ -104,4 +119,4 @@ class Librefanza(Agent.Movies):
             metadata.year = (int)(result['date'].split('-')[0])
 
         except Exception as e:
-            Log(e)
+            Log.Exception('')
