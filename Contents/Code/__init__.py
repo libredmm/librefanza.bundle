@@ -51,7 +51,11 @@ class Librefanza(Agent.Movies):
             Log.Exception('')
 
     def librefanzaURL(self, query):
-        query = query.split()[0]
+        tokens = query.split()
+        if '-' in tokens[0]:
+            query = tokens[0]
+        elif len(tokens) >= 2:
+            query = '-'.join(tokens[:2])
         return 'http://www.libredmm.com/movies/{}.json'.format(urllib.quote(query))
 
     def update(self, metadata, media, lang): 
