@@ -96,10 +96,6 @@ class Librefanza(Agent.Movies):
             thumbnail_image = HTTP.Request(result['thumbnail_image_url'])
             metadata.posters[result['thumbnail_image_url']] = Proxy.Preview(thumbnail_image)
 
-            # Rating
-            if result['review']:
-                metadata.rating = float(result['review'])
-
             # Roles
             if result['actresses']:
                 metadata.roles.clear()
