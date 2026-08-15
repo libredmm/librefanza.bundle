@@ -23,7 +23,7 @@ class Librefanza(Agent.Movies):
     def search(self, results, media, lang, manual):
         try:
             Log("Manual: {}".format(manual))
-            if manual:
+            if manual and media.name:
                 Log("Name: {}".format(media.name))
                 if media.name.startswith("http"):
                     url = media.name
@@ -31,33 +31,48 @@ class Librefanza(Agent.Movies):
                         url += ".json"
                 else:
                     url = self.librefanzaURL(media.name)
-            else:
+            elif media.filename:
                 filename = urllib.unquote(media.filename)
                 Log("File Name: {}".format(filename))
                 normalized_id = path.basename(path.dirname(filename)).split(" ")[0]
                 url = self.librefanzaURL(normalized_id)
+            else:
+                Log.Error("Search got neither a name nor a filename")
+                return
+            if not url:
+                Log.Error("Could not build a query URL")
+                return
             result = JSON.ObjectFromURL(url)
             Log("Search Result: {}".format(result))
 
-            if "err" not in result:
-                results.Append(
-                    MetadataSearchResult(
-                        id="librefanza|{}".format(base64.b64encode(url)),
-                        name=(result["normalized_id"] + " " + result["title"]),
-                        year=(result["date"]),
-                        score=100,
-                        lang=lang,
-                    )
+            if "err" in result:
+                Log.Error("LibreDMM error for {}: {}".format(url, result["err"]))
+                return
+            date = result.get("date") or ""
+            results.Append(
+                MetadataSearchResult(
+                    id="librefanza|{}".format(base64.b64encode(url)),
+                    name=u"{} {}".format(
+                        result.get("normalized_id") or "", result.get("title") or ""
+                    ).strip(),
+                    year=int(date[:4]) if date[:4].isdigit() else None,
+                    score=100,
+                    lang=lang,
                 )
+            )
         except Exception as e:
-            Log.Exception("")
+            Log.Exception("Search failed")
 
     def librefanzaURL(self, query):
         tokens = query.split()
+        if not tokens:
+            return None
         if "-" in tokens[0]:
             query = tokens[0]
         elif len(tokens) >= 2:
             query = "-".join(tokens[:2])
+        if isinstance(query, unicode):
+            query = query.encode("utf-8")
         return "http://www.libredmm.com/movies/{}.json".format(urllib.quote(query))
 
     def update(self, metadata, media, lang):
@@ -66,61 +81,81 @@ class Librefanza(Agent.Movies):
                 return
             Log.Info("ID: {}".format(metadata.id))
             try:
-                url = base64.b64decode(metadata.id[11:])
+                url = base64.b64decode(metadata.id[len("librefanza|"):])
             except TypeError:
-                url = self.librefanzaURL(metadata.id[11:])
+                url = self.librefanzaURL(metadata.id[len("librefanza|"):])
+            if not url or not url.startswith("http"):
+                Log.Error("Bad update URL from id {}".format(metadata.id))
+                return
             Log.Info("URL: {}".format(url))
             result = JSON.ObjectFromURL(url)
             Log("Update Result: {}".format(result))
 
-            # Art
-            cover_image = HTTP.Request(result["cover_image_url"])
-            metadata.art[result["cover_image_url"]] = Proxy.Preview(cover_image)
+            if "err" in result:
+                Log.Error("LibreDMM error for {}: {}".format(url, result["err"]))
+                return
+
+            # Cheap text fields first, so a failing image download later
+            # cannot abort an otherwise complete update.
 
             # Directors
-            if result["directors"]:
+            if result.get("directors"):
                 metadata.directors.clear()
                 for director in result["directors"]:
                     metadata.directors.new().name = director
 
             # Genres
-            if result["genres"]:
+            if result.get("genres"):
                 metadata.genres.clear()
                 for genre in result["genres"]:
                     metadata.genres.add(genre)
 
-            # Originally Avaiable At
-            date = datetime.strptime(result["date"][:10], "%Y-%m-%d")
-            Log("Originally Avaiable At: {}".format(date))
-            metadata.originally_available_at = date
-
-            # Posters
-            thumbnail_image = HTTP.Request(result["thumbnail_image_url"])
-            metadata.posters[result["thumbnail_image_url"]] = Proxy.Preview(
-                thumbnail_image
-            )
+            # Originally Avaiable At / Year
+            if result.get("date"):
+                date = datetime.strptime(result["date"][:10], "%Y-%m-%d")
+                Log("Originally Avaiable At: {}".format(date))
+                metadata.originally_available_at = date
+                metadata.year = date.year
 
             # Roles
-            if result["actresses"]:
+            if result.get("actresses"):
                 metadata.roles.clear()
                 for actress in result["actresses"]:
                     role = metadata.roles.new()
-                    role.name = actress["name"]
-                    if actress["image_url"]:
+                    role.name = actress.get("name")
+                    if actress.get("image_url"):
                         role.photo = actress["image_url"]
 
             # Studio
-            if result["makers"]:
+            if result.get("makers"):
                 metadata.studio = result["makers"][0]
 
             # Summary
-            metadata.summary = result["description"]
+            if result.get("description"):
+                metadata.summary = result["description"]
 
             # Title
-            metadata.title = "{} {}".format(result["normalized_id"], result["title"])
+            metadata.title = u"{} {}".format(
+                result.get("normalized_id") or "", result.get("title") or ""
+            ).strip()
 
-            # Year
-            metadata.year = (int)(result["date"].split("-")[0])
+            # Art
+            art_url = result.get("cover_image_url")
+            if art_url:
+                try:
+                    metadata.art[art_url] = Proxy.Preview(HTTP.Request(art_url))
+                except Exception:
+                    Log.Exception("Failed to fetch art {}".format(art_url))
+
+            # Posters
+            poster_url = result.get("thumbnail_image_url")
+            if poster_url:
+                try:
+                    metadata.posters[poster_url] = Proxy.Preview(
+                        HTTP.Request(poster_url)
+                    )
+                except Exception:
+                    Log.Exception("Failed to fetch poster {}".format(poster_url))
 
         except Exception as e:
-            Log.Exception("")
+            Log.Exception("Update failed")
